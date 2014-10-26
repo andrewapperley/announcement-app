@@ -6,6 +6,9 @@ from flask import jsonify
 from flask.ext.restful import Resource
 from sqlalchemy import Column, String, DateTime, SmallInteger, ForeignKey, exc, Integer, not_, exists, BLOB, desc
 from sqlalchemy.orm import *
+from datetime import timedelta
+from flask import make_response, request, current_app
+from functools import update_wrapper
 
 app = Flask(__name__)
 
@@ -53,17 +56,60 @@ class Announcement(Base):
 
 database.createDatabase()
 
+
+def crossdomain(origin=None, methods=None, headers=None,
+                max_age=21600, attach_to_all=True,
+                automatic_options=True):
+    if methods is not None:
+        methods = ', '.join(sorted(x.upper() for x in methods))
+    if headers is not None and not isinstance(headers, basestring):
+        headers = ', '.join(x.upper() for x in headers)
+    if not isinstance(origin, basestring):
+        origin = ', '.join(origin)
+    if isinstance(max_age, timedelta):
+        max_age = max_age.total_seconds()
+
+    def get_methods():
+        if methods is not None:
+            return methods
+
+        options_resp = current_app.make_default_options_response()
+        return options_resp.headers['allow']
+
+    def decorator(f):
+        def wrapped_function(*args, **kwargs):
+            if automatic_options and request.method == 'OPTIONS':
+                resp = current_app.make_default_options_response()
+            else:
+                resp = make_response(f(*args, **kwargs))
+            if not attach_to_all and request.method != 'OPTIONS':
+                return resp
+
+            h = resp.headers
+
+            h['Access-Control-Allow-Origin'] = origin
+            h['Access-Control-Allow-Methods'] = get_methods()
+            h['Access-Control-Max-Age'] = str(max_age)
+            if headers is not None:
+                h['Access-Control-Allow-Headers'] = headers
+            return resp
+
+        f.provide_automatic_options = False
+        return update_wrapper(wrapped_function, f)
+    return decorator
+
 @app.route('/settings', methods=["GET"])
+@crossdomain(origin='*')
 def settings():
 
     session = database.DBSession()
-    creators = session.query(Announcement_Creator).all()
+    c = session.query(Announcement_Creator).all()
 
     _creators = []
-    for c in creators:
+    for _c in c:
         _creators.append({
-            "name": c.announcement_creator_name,
-            "id": c.announcement_creator
+            "name": _c.announcement_creator_name,
+            "id": _c.announcement_creator
         })
     response = jsonify(creators=_creators)
     session.close()
@@ -71,6 +117,7 @@ def settings():
 
 
 @app.route('/announcements', methods=["GET"])
+@crossdomain(origin='*')
 def announcements():
     req = flask.request.args
     page_limit = 20
@@ -87,14 +134,14 @@ def announcements():
 
     if len(_announcements) > 0:
         for announcement in _announcements:
-            _announcement_objects.append(serialized_announcment(announcement))
+            _announcement_objects.append(serialized_announcement(announcement))
 
     response = jsonify(announcements=_announcement_objects)
     session.close()
     return response
 
 
-def serialized_announcment(announcement):
+def serialized_announcement(announcement):
     return {
         "announcement_date": announcement.announcement_date,
         "announcement_title": announcement.announcement_title,
@@ -106,4 +153,4 @@ def serialized_announcment(announcement):
     }
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
